@@ -4,7 +4,6 @@ import "base:runtime"
 import sapp "shared:sokol/app"
 import shelpers "shared:sokol/helpers"
 import sg "shared:sokol/gfx"
-
 import log "core:log"
 
 default_context: runtime.Context
@@ -49,18 +48,27 @@ init_cb :: proc "c" () {
         shader = g.shader,
         layout = {
             attrs = {
-                ATTR_main_pos = { format = .FLOAT2}
+                ATTR_main_pos = { format = .FLOAT2 },
+                ATTR_main_col = { format = .FLOAT4 }
             }
         }
     })
-    vertices := []f32{
-        -0.3, -0.3,
-        0, 0.3,
-        0.3, -0.3,
+
+    Vec2 :: [2]f32
+
+    Vertex_Data :: struct {
+        pos: Vec2,
+        col: sg.Color,
+    }
+
+    vertices := []Vertex_Data {
+        { pos = { -0.3, -0.3 }, col = { 1, 0, 0, 1 } },
+        { pos = { 0, 0.3, }, col = { 1, 0, 0, 1 } },
+        { pos = { 0.3, -0.3 }, col = { 1, 0, 0, 1 } },
     }
 
     g.vertex_buffer = sg.make_buffer({
-        data = { ptr = raw_data(vertices), size = len(vertices) * size_of(vertices[0])}
+        data = { ptr = raw_data(vertices), size = len(vertices) * size_of(vertices[0]) }
     })
 }
 
@@ -71,7 +79,7 @@ frame_cb :: proc "c" () {
 
     sg.apply_pipeline(g.pipeline)
     sg.apply_bindings({
-        vertex_buffers = {0 = g.vertex_buffer}
+        vertex_buffers = { 0 = g.vertex_buffer }
     })
     sg.draw(0, 3, 1)
     sg.end_pass()
