@@ -1,6 +1,7 @@
 package main
 
 import "base:runtime"
+import stbi "vendor:stb/image"
 import sapp "shared:sokol/app"
 import shelpers "shared:sokol/helpers"
 import sg "shared:sokol/gfx"
@@ -12,7 +13,9 @@ Globals :: struct {
     shader: sg.Shader,
     pipeline: sg.Pipeline,
     vertex_buffer: sg.Buffer,
-    index_buffer: sg.Buffer
+    index_buffer: sg.Buffer,
+    image: sg.Image,
+    sampler: sg.Sampler,
 }
 g: ^Globals
 
@@ -50,7 +53,8 @@ init_cb :: proc "c" () {
         layout = {
             attrs = {
                 ATTR_main_pos = { format = .FLOAT2 },
-                ATTR_main_col = { format = .FLOAT4 }
+                ATTR_main_col = { format = .FLOAT4 },
+                ATTR_main_uv = { format = .FLOAT2 }
             }
         },
         index_type = .UINT16
@@ -61,13 +65,14 @@ init_cb :: proc "c" () {
     Vertex_Data :: struct {
         pos: Vec2,
         col: sg.Color,
+        uv: Vec2,
     }
 
     vertices := []Vertex_Data {
-        { pos = { -0.3, -0.3 }, col = { 1, 0, 0, 1 } },
-        { pos = { 0.3, -0.3, }, col = { 0, 1, 0, 1 } },
-        { pos = { -0.3, 0.3 }, col = { 0, 0, 1, 1 } },
-        { pos = { 0.3, 0.3 }, col = { 1, 0, 1, 1 } },
+        { pos = { -0.3, -0.3 }, col = { 1, 0, 0, 1 }, uv = {0, 0} },
+        { pos = { 0.3, -0.3, }, col = { 0, 1, 0, 1 }, uv = {1, 0} },
+        { pos = { -0.3, 0.3 }, col = { 0, 0, 1, 1 }, uv = {0, 1} },
+        { pos = { 0.3, 0.3 }, col = { 1, 0, 1, 1 }, uv = {1, 1} },
     }
 
     g.vertex_buffer = sg.make_buffer({
@@ -83,7 +88,26 @@ init_cb :: proc "c" () {
         type = .INDEXBUFFER,
         data = sg_range(indices)
     })
+    w, h : i32
+    pixels := stbi.load("Plaster_17.png", &w, &h, nil, 4)
 
+    g.image = sg.make_image({
+        width = w,
+        height = h,
+        pixel_format = .RGBA8,
+        data = {
+            subimage = {
+                0 = {
+                    0 = {
+                        ptr = pixels,
+                        size = uint(w * h * 4)
+                    }
+                }
+            }
+        }
+    })
+    stbi.image_free(pixels)
+    g.sampler = sg.make_sampler({})
 }
 
 frame_cb :: proc "c" () {
@@ -94,7 +118,10 @@ frame_cb :: proc "c" () {
     sg.apply_pipeline(g.pipeline)
     sg.apply_bindings({
         vertex_buffers = g.vertex_buffer,
-        index_buffer = g.index_buffer
+        index_buffer = g.index_buffer,
+        images = { IMG_tex = g.image },
+        samplers =  { SMP_smp = g.sampler },
+
     })
     sg.draw(0, 6, 1)
     sg.end_pass()
@@ -103,7 +130,8 @@ frame_cb :: proc "c" () {
 
 cleanup_cb :: proc "c" () {
     context = default_context
-
+    sg.destroy_image(g.image)
+    sg.dealloc_sampler(g.sampler)
     sg.dealloc_buffer(g.vertex_buffer)
     sg.dealloc_buffer(g.index_buffer)
     sg.destroy_pipeline(g.pipeline)
