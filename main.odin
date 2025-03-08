@@ -27,6 +27,7 @@ Globals :: struct {
     vertex_buffer: sg.Buffer,
     index_buffer: sg.Buffer,
     image: sg.Image,
+    image2: sg.Image,
     sampler: sg.Sampler,
     rotation: f32,
     camera: struct {
@@ -83,7 +84,11 @@ init_cb :: proc "c" () {
                 ATTR_main_uv = { format = .FLOAT2 }
             }
         },
-        index_type = .UINT16
+        index_type = .UINT16,
+        depth =  {
+            write_enabled = true,
+            compare = .LESS_EQUAL
+        }
     })
 
     Vertex_Data :: struct {
@@ -95,10 +100,10 @@ init_cb :: proc "c" () {
     WHITE :: sg.Color { 1, 1, 1, 1 }
 
     vertices := []Vertex_Data {
-        { pos = { -0.3, -0.3, 0 }, col = WHITE, uv = { 0, 0 } },
-        { pos = { 0.3, -0.3, 0 }, col = WHITE, uv = { 1, 0 } },
-        { pos = { -0.3, 0.3, 0 }, col = WHITE, uv = { 0, 1 } },
-        { pos = { 0.3, 0.3, 0 }, col = WHITE, uv = { 1, 1 } },
+        { pos = { -0.5, -0.5, 0 }, col = WHITE, uv = { 0, 0 } },
+        { pos = { 0.5, -0.5, 0 }, col = WHITE, uv = { 1, 0 } },
+        { pos = { -0.5, 0.5, 0 }, col = WHITE, uv = { 0, 1 } },
+        { pos = { 0.5, 0.5, 0 }, col = WHITE, uv = { 1, 1 } },
     }
 
     g.vertex_buffer = sg.make_buffer({
@@ -114,10 +119,17 @@ init_cb :: proc "c" () {
         type = .INDEXBUFFER,
         data = sg_range(indices)
     })
-    w, h : i32
-    pixels := stbi.load("Plaster_17.png", &w, &h, nil, 4)
+    g.image = load_image("Plaster_17.png")
+    g.image2 = load_image("Plaster_04.png")
 
-    g.image = sg.make_image({
+    g.sampler = sg.make_sampler({ })
+}
+
+load_image :: proc(filename: cstring) -> sg.Image {
+    w, h : i32
+    pixels := stbi.load(filename, &w, &h, nil, 4)
+
+    image := sg.make_image({
         width = w,
         height = h,
         pixel_format = .RGBA8,
@@ -133,9 +145,9 @@ init_cb :: proc "c" () {
         }
     })
     stbi.image_free(pixels)
-    g.sampler = sg.make_sampler({ })
-}
 
+    return image
+}
 frame_cb :: proc "c" () {
     context = default_context
 
@@ -151,25 +163,50 @@ frame_cb :: proc "c" () {
     g.rotation += linalg.to_radians(ROTATION_SPEED * dt)
 
     projection := linalg.matrix4_perspective_f32(70, sapp.widthf() / sapp.heightf(), 0.0001, 1000)
-    n := linalg.matrix4_translate_f32({ 0, 0, 0 }) * linalg.matrix4_from_yaw_pitch_roll_f32(g.rotation, 0, g.rotation)
     v := linalg.matrix4_look_at_f32(g.camera.position, g.camera.target, { 0, 1, 0 })
 
-    vs_params := Vs_Params {
-        mvp = projection * v * n
+    Object :: struct {
+        pos: Vec3,
+        rot: Vec3,
+        img: sg.Image,
+    }
+    objects := []Object {
+        { { 0, 0, 0 }, { 0, 0, 0 }, g.image2 },
+        { { 1, 0, 0 }, { 0, 0, 0 }, g.image2 },
+        { { 2, 0, 0 }, { 0, 0, 0 }, g.image2 },
+        { { 0, 0, 2 }, { 0, 0, 0 }, g.image2 },
+        { { 1, 0, 2 }, { 0, 0, 0 }, g.image2 },
+        { { 2, 0, 2 }, { 0, 0, 0 }, g.image2 },
+        { { 0, -0.5, 0.5 }, { 90, 0, 0 }, g.image },
+        { { 1, -0.5, 0.5 }, { 90, 0, 0 }, g.image },
+        { { 2, -0.5, 0.5 }, { 90, 0, 0 }, g.image },
+        { { 0, -0.5, 1.5 }, { 90, 0, 0 }, g.image },
+        { { 1, -0.5, 1.5 }, { 90, 0, 0 }, g.image },
+        { { 2, -0.5, 1.5 }, { 90, 0, 0 }, g.image },
     }
 
     sg.begin_pass({ swapchain = shelpers.glue_swapchain() })
 
     sg.apply_pipeline(g.pipeline)
-    sg.apply_bindings({
+    binding := sg.Bindings({
         vertex_buffers = g.vertex_buffer,
         index_buffer = g.index_buffer,
         images = { IMG_tex = g.image },
         samplers =  { SMP_smp = g.sampler },
-
     })
-    sg.apply_uniforms(UB_Vs_Params, sg_range(&vs_params))
-    sg.draw(0, 6, 1)
+
+    for obj in objects {
+        m := linalg.matrix4_translate_f32(obj.pos) * linalg.matrix4_from_yaw_pitch_roll_f32(to_radians(obj.rot.y), to_radians(obj.rot.x), to_radians(obj.rot.z))
+        b := binding
+
+        b.images[IMG_tex] = obj.img
+
+        sg.apply_bindings(b)
+        sg.apply_uniforms(UB_Vs_Params, sg_range(&Vs_Params {
+            mvp = projection * v * m
+        }))
+        sg.draw(0, 6, 1)
+    }
     sg.end_pass()
     sg.commit()
     mouse_move = { }
@@ -178,6 +215,7 @@ frame_cb :: proc "c" () {
 cleanup_cb :: proc "c" () {
     context = default_context
     sg.destroy_image(g.image)
+    sg.destroy_image(g.image2)
     sg.dealloc_sampler(g.sampler)
     sg.dealloc_buffer(g.vertex_buffer)
     sg.dealloc_buffer(g.index_buffer)
@@ -206,7 +244,7 @@ event_cb :: proc "c" (ev: ^sapp.Event) {
 }
 
 MOVE_SPEED :: 3
-LOOK_SENSITIVITY :: 0.3
+LOOK_SENSITIVITY :: 0.2
 
 update_camera :: proc(dt: f32) {
     move_input: Vec2
@@ -216,14 +254,14 @@ update_camera :: proc(dt: f32) {
     if key_down[.A] do move_input.x = -1
     else if key_down[.D] do move_input.x = 1
 
-    look_input: Vec2 = -mouse_move * LOOK_SENSITIVITY
+    look_input : Vec2 = -mouse_move * LOOK_SENSITIVITY
     g.camera.look += look_input
     g.camera.look.x = math.wrap(g.camera.look.x, 360)
     g.camera.look.y = math.clamp(g.camera.look.y, -90, 90)
 
     look_mat := linalg.matrix4_from_yaw_pitch_roll_f32(to_radians(g.camera.look.x), to_radians(g.camera.look.y), 0)
-    forward := (look_mat * Vec4 {0,0,-1,1}).xyz
-    right := (look_mat * Vec4 {1,0,0,1}).xyz
+    forward := (look_mat * Vec4 { 0, 0, -1, 1 }).xyz
+    right := (look_mat * Vec4 { 1, 0, 0, 1 }).xyz
 
     move_dir := forward * move_input.y + right * move_input.x
 
