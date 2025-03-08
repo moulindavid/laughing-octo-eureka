@@ -1,13 +1,19 @@
 package main
 
+import "base:intrinsics"
 import "base:runtime"
 import stbi "vendor:stb/image"
 import sapp "shared:sokol/app"
 import shelpers "shared:sokol/helpers"
 import sg "shared:sokol/gfx"
-import log "core:log"
+import "core:log"
+import "core:math/linalg"
 
 default_context: runtime.Context
+
+Mat4 :: matrix[4, 4]f32
+
+ROTATION_SPEED :: 90
 
 Globals :: struct {
     shader: sg.Shader,
@@ -16,6 +22,7 @@ Globals :: struct {
     index_buffer: sg.Buffer,
     image: sg.Image,
     sampler: sg.Sampler,
+    rotation: f32,
 }
 g: ^Globals
 
@@ -29,7 +36,7 @@ main :: proc() {
         allocator = sapp.Allocator(shelpers.allocator(&default_context)),
         logger = sapp.Logger(shelpers.logger(&default_context)),
         init_cb = init_cb,
-        frame_cb = frame_cb,
+        frame_cb =frame_cb,
         cleanup_cb = cleanup_cb,
         event_cb = event_cb,
     })
@@ -52,7 +59,7 @@ init_cb :: proc "c" () {
         shader = g.shader,
         layout = {
             attrs = {
-                ATTR_main_pos = { format = .FLOAT2 },
+                ATTR_main_pos = { format = .FLOAT3 },
                 ATTR_main_col = { format = .FLOAT4 },
                 ATTR_main_uv = { format = .FLOAT2 }
             }
@@ -61,18 +68,21 @@ init_cb :: proc "c" () {
     })
 
     Vec2 :: [2]f32
+    Vec3 :: [3]f32
 
     Vertex_Data :: struct {
-        pos: Vec2,
+        pos: Vec3,
         col: sg.Color,
         uv: Vec2,
     }
 
+    WHITE :: sg.Color { 1, 1, 1, 1 }
+
     vertices := []Vertex_Data {
-        { pos = { -0.3, -0.3 }, col = { 1, 0, 0, 1 }, uv = {0, 0} },
-        { pos = { 0.3, -0.3, }, col = { 0, 1, 0, 1 }, uv = {1, 0} },
-        { pos = { -0.3, 0.3 }, col = { 0, 0, 1, 1 }, uv = {0, 1} },
-        { pos = { 0.3, 0.3 }, col = { 1, 0, 1, 1 }, uv = {1, 1} },
+        { pos = { -0.3, -0.3, 0 }, col = WHITE, uv = { 0, 0 } },
+        { pos = { 0.3, -0.3, 0 }, col = WHITE, uv = { 1, 0 } },
+        { pos = { -0.3, 0.3, 0 }, col = WHITE, uv = { 0, 1 } },
+        { pos = { 0.3, 0.3, 0 }, col = WHITE, uv = { 1, 1 } },
     }
 
     g.vertex_buffer = sg.make_buffer({
@@ -107,11 +117,21 @@ init_cb :: proc "c" () {
         }
     })
     stbi.image_free(pixels)
-    g.sampler = sg.make_sampler({})
+    g.sampler = sg.make_sampler({ })
 }
 
 frame_cb :: proc "c" () {
     context = default_context
+    dt := f32(sapp.frame_duration())
+
+    g.rotation += linalg.to_radians(ROTATION_SPEED * dt)
+
+    projection := linalg.matrix4_perspective_f32(70, sapp.widthf() / sapp.heightf(), 0.0001, 1000)
+    n := linalg.matrix4_translate_f32({ 0, 0, -1.5 }) * linalg.matrix4_from_yaw_pitch_roll_f32(g.rotation, 0, g.rotation)
+
+    vs_params := Vs_Params {
+        mvp = projection * n
+    }
 
     sg.begin_pass({ swapchain = shelpers.glue_swapchain() })
 
@@ -123,6 +143,7 @@ frame_cb :: proc "c" () {
         samplers =  { SMP_smp = g.sampler },
 
     })
+    sg.apply_uniforms(UB_Vs_Params, sg_range(&vs_params))
     sg.draw(0, 6, 1)
     sg.end_pass()
     sg.commit()
@@ -146,6 +167,15 @@ event_cb :: proc "c" (ev: ^sapp.Event) {
     log.debug(ev.type)
 }
 
-sg_range :: proc(s: []$T) -> sg.Range {
+sg_range :: proc {
+    sg_range_from_struct,
+    sg_range_from_slice,
+}
+
+sg_range_from_struct :: proc(s: ^$T) -> sg.Range where intrinsics.type_is_struct(T) {
+    return  { ptr = s, size = size_of(T) }
+}
+
+sg_range_from_slice :: proc(s: []$T) -> sg.Range {
     return  { ptr = raw_data(s), size = len(s) * size_of(s[0]) }
 }
