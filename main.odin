@@ -8,10 +8,16 @@ import shelpers "shared:sokol/helpers"
 import sg "shared:sokol/gfx"
 import "core:log"
 import "core:math/linalg"
+import "core:math"
+
+to_radians :: linalg.to_radians
 
 default_context: runtime.Context
 
 Mat4 :: matrix[4, 4]f32
+Vec2 :: [2]f32
+Vec3 :: [3]f32
+Vec4 :: [4]f32
 
 ROTATION_SPEED :: 90
 
@@ -23,6 +29,11 @@ Globals :: struct {
     image: sg.Image,
     sampler: sg.Sampler,
     rotation: f32,
+    camera: struct {
+        position: Vec3,
+        target: Vec3,
+        look: Vec2,
+    }
 }
 g: ^Globals
 
@@ -52,7 +63,15 @@ init_cb :: proc "c" () {
         logger = sg.Logger(shelpers.logger(&default_context)),
     })
 
+    sapp.show_mouse(false)
+    sapp.lock_mouse(true)
+
     g = new (Globals)
+
+    g.camera = {
+        position =  { 0, 0, 2 },
+        target = { 0, 0, 1 },
+    }
 
     g.shader = sg.make_shader(main_shader_desc(sg.query_backend()))
     g.pipeline = sg.make_pipeline({
@@ -66,9 +85,6 @@ init_cb :: proc "c" () {
         },
         index_type = .UINT16
     })
-
-    Vec2 :: [2]f32
-    Vec3 :: [3]f32
 
     Vertex_Data :: struct {
         pos: Vec3,
@@ -122,15 +138,24 @@ init_cb :: proc "c" () {
 
 frame_cb :: proc "c" () {
     context = default_context
+
+    if key_down[.ESCAPE] {
+        sapp.quit()
+        return
+    }
+
     dt := f32(sapp.frame_duration())
+
+    update_camera(dt)
 
     g.rotation += linalg.to_radians(ROTATION_SPEED * dt)
 
     projection := linalg.matrix4_perspective_f32(70, sapp.widthf() / sapp.heightf(), 0.0001, 1000)
-    n := linalg.matrix4_translate_f32({ 0, 0, -1.5 }) * linalg.matrix4_from_yaw_pitch_roll_f32(g.rotation, 0, g.rotation)
+    n := linalg.matrix4_translate_f32({ 0, 0, 0 }) * linalg.matrix4_from_yaw_pitch_roll_f32(g.rotation, 0, g.rotation)
+    v := linalg.matrix4_look_at_f32(g.camera.position, g.camera.target, { 0, 1, 0 })
 
     vs_params := Vs_Params {
-        mvp = projection * n
+        mvp = projection * v * n
     }
 
     sg.begin_pass({ swapchain = shelpers.glue_swapchain() })
@@ -147,6 +172,7 @@ frame_cb :: proc "c" () {
     sg.draw(0, 6, 1)
     sg.end_pass()
     sg.commit()
+    mouse_move = { }
 }
 
 cleanup_cb :: proc "c" () {
@@ -162,9 +188,50 @@ cleanup_cb :: proc "c" () {
     sg.shutdown()
 }
 
+mouse_move: Vec2
+key_down: #sparse[sapp.Keycode]bool
+
 event_cb :: proc "c" (ev: ^sapp.Event) {
     context = default_context
-    log.debug(ev.type)
+    //log.debug(ev.type)
+
+    #partial switch ev.type {
+    case .MOUSE_MOVE:
+        mouse_move += { ev.mouse_dx, ev.mouse_dy }
+    case.KEY_DOWN:
+        key_down[ev.key_code] = true
+    case .KEY_UP:
+        key_down[ev.key_code] = false
+    }
+}
+
+MOVE_SPEED :: 3
+LOOK_SENSITIVITY :: 0.3
+
+update_camera :: proc(dt: f32) {
+    move_input: Vec2
+
+    if key_down[.W] do move_input.y = 1
+    else if key_down[.S] do move_input.y = -1
+    if key_down[.A] do move_input.x = -1
+    else if key_down[.D] do move_input.x = 1
+
+    look_input: Vec2 = -mouse_move * LOOK_SENSITIVITY
+    g.camera.look += look_input
+    g.camera.look.x = math.wrap(g.camera.look.x, 360)
+    g.camera.look.y = math.clamp(g.camera.look.y, -90, 90)
+
+    look_mat := linalg.matrix4_from_yaw_pitch_roll_f32(to_radians(g.camera.look.x), to_radians(g.camera.look.y), 0)
+    forward := (look_mat * Vec4 {0,0,-1,1}).xyz
+    right := (look_mat * Vec4 {1,0,0,1}).xyz
+
+    move_dir := forward * move_input.y + right * move_input.x
+
+    motion := linalg.normalize0(move_dir) * MOVE_SPEED * dt
+    g.camera.position += motion
+
+    g.camera.target = g.camera.position + forward
+
 }
 
 sg_range :: proc {
